@@ -1,0 +1,144 @@
+openapi: 3.1.0
+info:
+  title: Complex API 3.1
+  version: 1.1.0
+  description: A complex API to test deep comparison capabilities (3.1 version updated).
+paths:
+  /users:
+    get:
+      summary: List users
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20 # Changed default
+            maximum: 100 # Added constraint
+        - name: sort # Added parameter
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    # POST removed
+
+  /products/{id}:
+    get:
+      summary: Get product
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+
+  /orders: # New endpoint
+    post:
+      summary: Create order
+      responses:
+        '201':
+          description: Order created
+
+components:
+  schemas:
+    User:
+      type: object
+      required:
+        - id
+        - username
+        # email removed from required
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+          minLength: 5 # Changed minLength
+          maxLength: 20
+          pattern: '^[a-z0-9_]+$' # Changed pattern
+        email:
+          type: string
+          format: email
+        age:
+          type: integer
+          minimum: 21 # Changed minimum
+          maximum: 120 # Changed maximum
+        role:
+          type: string
+          enum: [user, admin, superadmin] # Changed enum (moderator -> superadmin)
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 10 # Changed maxItems
+        address:
+          $ref: '#/components/schemas/Address'
+        phoneNumber: # New property
+          type: string
+          pattern: '^\+?[0-9]+$'
+        nullableField:
+          type: string # Changed from [string, null] to string
+
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string
+        zip:
+          type: string
+          pattern: '^\d{5}(-\d{4})?$' # Changed pattern
+        country: # New property
+          type: string
+
+    Product:
+      type: object
+      oneOf:
+        - $ref: '#/components/schemas/PhysicalProduct'
+        - $ref: '#/components/schemas/DigitalProduct'
+        - $ref: '#/components/schemas/ServiceProduct' # Added option
+
+    PhysicalProduct:
+      type: object
+      properties:
+        weight:
+          type: number
+          exclusiveMinimum: 0 # No change, but verifying it persists
+        dimensions:
+          type: string
+
+    DigitalProduct:
+      type: object
+      properties:
+        fileSize:
+          type: integer
+        downloadUrl:
+          type: string
+          format: uri
+
+    ServiceProduct: # New schema
+      type: object
+      properties:
+        duration:
+          type: integer
+        provider:
+          type: string
+
+    # Error removed

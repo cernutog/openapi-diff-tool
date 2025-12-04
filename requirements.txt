@@ -1,0 +1,4 @@
+PyYAML
+docxtpl
+Pillow
+pyinstaller

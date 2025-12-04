@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build & Distribution
+dist/
+build/
+*.spec
+
+# Logs & Reports
+logs/
+reports/
+*.log
+
+# Configuration (User specific)
+config.json
+
+# IDEs
+.vscode/
+.idea/
+
+# Virtual Env
+venv/
+env/

@@ -1,0 +1,80 @@
+# OpenAPI Changes Report (Synthetic)
+
+---
+
+## General Info
+{% if diff.info_changes %}
+| Field | Old Value | New Value |
+|:---|:---|:---|
+{% for key, change in diff.info_changes.items() %}
+| **{{ key }}** | `{{ change.old }}` | `{{ change.new }}` |
+{% endfor %}
+{% else %}
+No changes in General Info.
+{% endif %}
+
+---
+
+## New Endpoints
+{% if diff.new_paths %}
+{% for path in diff.new_paths %}
+- `{{ path }}`
+{% endfor %}
+{% else %}
+No new endpoints.
+{% endif %}
+
+## Removed Endpoints
+{% if diff.removed_paths %}
+{% for path in diff.removed_paths %}
+- `{{ path }}`
+{% endfor %}
+{% else %}
+No removed endpoints.
+{% endif %}
+
+## Modified Endpoints
+{% if diff.modified_paths %}
+{% for path, changes in diff.modified_paths.items() %}
+- **{{ path }}**
+    {% if changes.new_ops %}
+    - New Operations: {{ changes.new_ops | join(', ') }}
+    {% endif %}
+    {% if changes.removed_ops %}
+    - Removed Operations: {{ changes.removed_ops | join(', ') }}
+    {% endif %}
+    {% if changes.modified_ops %}
+    - Modified Operations: {{ changes.modified_ops.keys() | join(', ') }}
+    {% endif %}
+{% endfor %}
+{% else %}
+No modified endpoints.
+{% endif %}
+
+---
+
+## Schema Changes (Summary)
+{% set ns = namespace(pure_count=0) %}
+{% if diff.renamed_components and diff.renamed_components.schemas %}
+    {% for old, new in diff.renamed_components.schemas.items() %}
+        {% if not diff.modified_components or not diff.modified_components.schemas or old not in diff.modified_components.schemas %}
+            {% set ns.pure_count = ns.pure_count + 1 %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
+| Type | Count |
+|:---|:---:|
+| New | {{ diff.new_components.get('schemas', []) | length }} |
+| Removed | {{ diff.removed_components.get('schemas', []) | length }} |
+| Modified | {{ diff.modified_components.get('schemas', {}) | length }} |
+| Renamed (Pure) | {{ ns.pure_count }} |
+
+{% if ns.pure_count > 0 %}
+### Renamed Schemas (Identical Content)
+{% for old, new in diff.renamed_components.schemas.items() %}
+    {% if not diff.modified_components or not diff.modified_components.schemas or old not in diff.modified_components.schemas %}
+- `{{ old }}` &rarr; `{{ new }}`
+    {% endif %}
+{% endfor %}
+{% endif %}

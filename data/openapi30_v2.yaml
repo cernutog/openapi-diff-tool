@@ -1,0 +1,77 @@
+openapi: 3.0.1
+info:
+  title: Sample API
+  version: 1.1.0
+  description: A sample API to test the diff tool (updated).
+paths:
+  /users:
+    get:
+      summary: List users
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100 # Added constraint
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserDetail' # Changed ref
+    post:
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '201':
+          description: Created
+  /users/{id}:
+    delete: # New operation
+      summary: Delete user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Deleted
+components:
+  schemas:
+    User:
+      type: object
+      required:
+        - id
+        - username
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+          minLength: 5 # Changed constraint
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [active, inactive, suspended] # Changed enum
+        role: # New property
+          type: string
+    UserDetail: # New schema
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          properties:
+            lastLogin:
+              type: string
+              format: date-time

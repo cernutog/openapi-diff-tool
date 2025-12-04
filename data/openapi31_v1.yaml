@@ -1,0 +1,22 @@
+openapi: 3.1.0
+info:
+  title: Sample API 3.1
+  version: 1.0.0
+paths:
+  /items:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+components:
+  schemas:
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: [string, null]

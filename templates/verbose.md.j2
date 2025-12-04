@@ -1,0 +1,114 @@
+# OpenAPI Changes Report (Verbose)
+
+---
+
+## General Info
+{% if diff.info_changes %}
+| Field | Old Value | New Value |
+|:---|:---|:---|
+{% for key, change in diff.info_changes.items() %}
+| **{{ key }}** | `{{ change.old }}` | `{{ change.new }}` |
+{% endfor %}
+{% else %}
+No changes in General Info.
+{% endif %}
+
+---
+
+## Paths
+
+### New Paths
+{% if diff.new_paths %}
+{% for path in diff.new_paths %}
+- `{{ path }}`
+{% endfor %}
+{% else %}
+None
+{% endif %}
+
+### Removed Paths
+{% if diff.removed_paths %}
+{% for path in diff.removed_paths %}
+- `{{ path }}`
+{% endfor %}
+{% else %}
+None
+{% endif %}
+
+### Modified Paths
+{% if diff.modified_paths %}
+{% for path, changes in diff.modified_paths.items() %}
+#### `{{ path }}`
+{% if changes.new_ops %}
+- **New Operations**: {{ changes.new_ops | join(', ') }}
+{% endif %}
+{% if changes.removed_ops %}
+- **Removed Operations**: {{ changes.removed_ops | join(', ') }}
+{% endif %}
+{% if changes.modified_ops %}
+- **Modified Operations**:
+{% for op, op_diff in changes.modified_ops.items() %}
+    - **{{ op.upper() }}**:
+        {# TODO: Add detailed operation diff here #}
+        - Changes detected.
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+None
+{% endif %}
+
+---
+
+## Components
+
+### Schemas
+
+#### New Schemas
+{% if diff.new_components.get('schemas') %}
+{% for schema in diff.new_components.schemas %}
+- `{{ schema }}`
+{% endfor %}
+{% else %}
+None
+{% endif %}
+
+#### Removed Schemas
+{% if diff.removed_components.get('schemas') %}
+{% for schema in diff.removed_components.schemas %}
+- `{{ schema }}`
+{% endfor %}
+{% else %}
+None
+{% endif %}
+
+#### Modified Schemas
+{% if diff.modified_components.get('schemas') %}
+{% for schema, changes in diff.modified_components.schemas.items() %}
+##### `{{ schema }}`
+{% for key, val in changes.items() %}
+{% if key == 'properties' %}
+- **Properties Changed**:
+    {% if val.new %}
+    - New: `{{ val.new | join(', ') }}`
+    {% endif %}
+    {% if val.removed %}
+    - Removed: `{{ val.removed | join(', ') }}`
+    {% endif %}
+    {% if val.modified %}
+    - Modified:
+    {% for prop, p_diff in val.modified.items() %}
+        - `{{ prop }}`:
+        {% for p_key, p_val in p_diff.items() %}
+            - **{{ p_key }}**: `{{ p_val.old }}` -> `{{ p_val.new }}`
+        {% endfor %}
+    {% endfor %}
+    {% endif %}
+{% else %}
+- **{{ key }}**: `{{ val.old }}` -> `{{ val.new }}`
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% else %}
+None
+{% endif %}
