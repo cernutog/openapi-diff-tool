@@ -1,0 +1,87 @@
+    - [x] Setup docxtpl for DOCX templates <!-- id: 13 -->
+    - [x] Create default templates (Synthetic/Verbose for MD/DOCX) <!-- id: 14 -->
+    - [x] Implement ReportGenerator using templates <!-- id: 15 -->
+- [x] Create comprehensive test data <!-- id: 10 -->
+    - [x] Create OpenAPI 3.0 sample (v1 & v2) <!-- id: 16 -->
+    - [x] Create OpenAPI 3.1 sample (v1 & v2) <!-- id: 17 -->
+    - [x] Create Complex OpenAPI 3.0 sample (v1 & v2) <!-- id: 18 -->
+    - [x] Create Complex OpenAPI 3.1 sample (v1 & v2) <!-- id: 19 -->
+- [x] Improve Report Aesthetics <!-- id: 20 -->
+    - [x] Create Premium Markdown Templates <!-- id: 21 -->
+    - [x] Create Premium DOCX Templates <!-- id: 22 -->
+- [x] Refine Report Aesthetics (Feedback Loop) <!-- id: 23 -->
+    - [x] Professionalize Markdown Templates (Less icons) <!-- id: 24 -->
+    - [x] Fix DOCX Formatting (Tables, Whitespace) <!-- id: 25 -->
+- [x] Implement Executive Report Design <!-- id: 26 -->
+    - [x] Verify Analytic Report <!-- id: 41 -->
+- [x] GUI Implementation <!-- id: 46 -->
+    - [x] Create `gui.py` with Tkinter <!-- id: 47 -->
+- [x] Investigate why `GenericAccountIdentification1` chain is not detected as rename
+  - [x] Debug `comparator.py` with reproduction script
+  - [x] Identify root cause (Ambiguous Identical Candidates)
+  - [x] Implement voting mechanism (structural context) for ambiguous renames
+  - [x] Verify fix
+
+- [x] Improve Analytic Report Clarity
+  - [x] Add "Legend of Changes" section to report
+  - [x] Refine styling for combinator keywords (`oneOf`, `allOf`, `anyOf`) to distinguish from status labels (Keyword Style: Bold Monospace)
+  - [x] Refine Legend Design (Title style, Alignment, Colors, Separators, Width)
+  - [x] Add Table rendering for Endpoint Metadata (Summary/Description) changes
+  - [x] Refine Label Formatting (Split Badge/Text) and Response Table Style
+  - [x] Align Metadata/Response/Property Tables to Right Margin and Rename Dashboard to "Change Summary"
+  - [x] Add Schemas to Navigation Pane (Level 4 Headings)
+  - [x] Align Attribute Changes Table to Right Margin
+  - [x] Refine Schema Navigation (Exclude Labels, Restore Styling)
+  - [x] Remove "Classification: Internal" and "Confidential" labels
+  - [x] Standardize Schema Renaming Notation to `NewSchema (was OldSchema)`
+  - [x] Apply Mixed Bold Styling: `**NewSchema** (was OldSchema)`
+  - [x] Remove "Confidential" from Header
+  - [x] Remove "Confidential" from Header
+  - [x] Hide Zero-Change Rows in Change Summary
+  - [x] Convert Synthetic Report to DOCX (Uniform Styling)
+  - [x] Move Change Summary to Top of Synthetic Report
+  - [x] Add Versions to Title and Fix Header Text
+  - [x] Redefine Synthetic Content (Summarized Info, Endpoints, Schemas)
+  - [x] Rename "Change Summary" to "Change Matrix"
+  - [x] Rename "Change Summary" to "Change Matrix"
+  - [x] Refine Synthetic General Info (Show Short Values)
+  - [x] Improve Report Aesthetics (Table Shading, General Info Table)
+  - [x] Neutral Title and Spec Metadata Table (File, Title, Version)
+  - [x] Refine General Info (Remove Values, Show Status Only)
+  - [x] Highlight Spec Metadata Table (Dark Blue Header)
+  - [x] Standardize Headers for Analytic and Impact Reports
+  - [x] Align Synthetic General Info Table (Width 7.0")
+  - [x] Reorder GUI Options (Synthetic -> Analytic -> Impact)
+  - [x] Remove "Generated/Scope" Line from Analytic Report
+  - [x] Refine Impact Report Summary (Pluralization, No "x")
+  - [x] Align All Tables to 7.0 Inches
+
+- [x] Advanced Corporate Template Support
+  - [x] Config: Create ConfigManager (config.json)
+  - [x] GUI: Remove Template Path Input
+  - [x] GUI: Add Preferences Dialog (Static Variables)
+  - [x] Generators: Auto-load 'template.docx'
+  - [x] Generators: Implement Variable Substitution (Static + Dynamic)
+
+- [x] Enforce Default Styles on Templates (REVERTED)
+  - [x] Generators: Revert Forced Page Layout
+  - [x] Generators: Revert Forced Style Updates
+- [x] Expanded Template System
+  - [x] Generators: Support Multiple Templates (Synthetic, Analytic, Impact)
+  - [x] GUI: Enable Editing of Variables in Preferences
+  - [x] GUI: Add "Insert Standard Variable" Helper (Dropdown/Selection)
+- [x] Renaming Reports and Templates
+  - [x] Generators: Update Template Filenames (synthesis, analytical)
+  - [x] GUI: Update Report Labels and Output Filenames
+  - [x] GUI: Add "Open Template" Section in Preferences
+- [x] Application Polish
+  - [x] Assets: Generate and Add Application Icon
+  - [x] GUI: Set Window Icon
+- [x] Deployment
+  - [x] Code: Update `gui.py` for Resource Path (sys._MEIPASS)
+  - [x] Build: Create `build_exe.py` (Icon Conversion + PyInstaller)
+  - [x] Application Polish (Phase 2)
+  - [x] Logging: Add "Debug Mode" Preference & Suppress Logs
+  - [x] GUI: Modernize with `ttk` (Native Windows Controls)
+  - [x] GUI: Add Menu Bar (File, Edit, Help)
+  - [x] GUI: Enable High DPI Awareness
