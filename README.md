@@ -61,3 +61,10 @@ The output will be in the `dist/` folder.
 ## License
 
 [MIT License](LICENSE)
+
+## Project Documentation
+
+For a detailed history of the project's development and verification:
+
+*   [Task List](docs/context/task.md): Comprehensive list of all implemented features and tasks.
+*   [Walkthrough](docs/context/walkthrough.md): Detailed verification scenarios and development log.
