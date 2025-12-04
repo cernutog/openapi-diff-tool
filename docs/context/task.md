@@ -16,6 +16,15 @@
     - [x] Verify Analytic Report <!-- id: 41 -->
 - [x] GUI Implementation <!-- id: 46 -->
     - [x] Create `gui.py` with Tkinter <!-- id: 47 -->
+- [x] **Heuristic Engine Expansion** <!-- id: 49 -->
+    - [x] Implement Endpoint Rules (E01-E10) <!-- id: 50 -->
+    - [x] Implement Parameter Rules (P01-P12) <!-- id: 51 -->
+    - [x] Implement Request Body Rules (B01-B08) <!-- id: 52 -->
+    - [x] Implement Response Rules (R01-R08) <!-- id: 53 -->
+    - [x] Implement Schema Rules (S01-S15) <!-- id: 54 -->
+    - [x] Implement Security Rules (Z01-Z05) <!-- id: 55 -->
+    - [x] Verify with synthetic test cases <!-- id: 56 -->
+    - [x] Implement **Executive Risk Assessment** (Context-Aware Notice) <!-- id: 57 -->
 - [x] Investigate why `GenericAccountIdentification1` chain is not detected as rename
   - [x] Debug `comparator.py` with reproduction script
   - [x] Identify root cause (Ambiguous Identical Candidates)
