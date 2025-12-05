@@ -301,23 +301,25 @@ class OpenAPIDiffGUI:
         # 1. File Selection Frame
         frame_files = tk.LabelFrame(self.root, text="Spec Files", padx=10, pady=10)
         frame_files.pack(fill="x", **pad_opts)
+        frame_files.columnconfigure(1, weight=1) # Make column 1 expandable
         
         # Old Spec
         tk.Label(frame_files, text="Old Spec (YAML):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame_files, textvariable=self.old_spec_path, width=50).grid(row=0, column=1, padx=5)
+        ttk.Entry(frame_files, textvariable=self.old_spec_path).grid(row=0, column=1, padx=5, sticky="ew")
         ttk.Button(frame_files, text="Browse...", command=self._browse_old).grid(row=0, column=2)
         
         # New Spec
         tk.Label(frame_files, text="New Spec (YAML):").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frame_files, textvariable=self.new_spec_path, width=50).grid(row=1, column=1, padx=5)
+        ttk.Entry(frame_files, textvariable=self.new_spec_path).grid(row=1, column=1, padx=5, sticky="ew")
         ttk.Button(frame_files, text="Browse...", command=self._browse_new).grid(row=1, column=2)
 
         # 2. Output Configuration
         frame_out = tk.LabelFrame(self.root, text="Output Configuration", padx=10, pady=10)
         frame_out.pack(fill="x", **pad_opts)
+        frame_out.columnconfigure(1, weight=1) # Make column 1 expandable
         
         tk.Label(frame_out, text="Output Folder:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame_out, textvariable=self.output_dir, width=50).grid(row=0, column=1, padx=5)
+        ttk.Entry(frame_out, textvariable=self.output_dir).grid(row=0, column=1, padx=5, sticky="ew")
         ttk.Button(frame_out, text="Browse...", command=self._browse_out).grid(row=0, column=2)
         ttk.Button(frame_out, text="Open Folder", command=self._open_output_folder).grid(row=0, column=3, padx=5)
 
