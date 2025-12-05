@@ -445,3 +445,8 @@ Command: `python reproduce_issue.py`
 - **Problem**: Renames inside `allOf` / `oneOf` lists were being reported as separate `added` and `removed` items, breaking the reference chain detection.
 - **Fix**: Enhanced `_scan_paths` (Seed Phase) to detect 1-to-1 replacements within these lists (e.g., `removed: [OldRef]`, `added: [NewRef]`) and register them as rename candidates.
 - **Verification**: `reproduce_issue.py` confirmed that `ChildV1 -> ChildV2` (inside `allOf`) is now correctly detected, allowing propagation to `GrandChildV1 -> GrandChildV2`.
+
+### Scenario 42: GUI Resizing & Versioning (v1.0.0)
+- **Versioning**: Implemented version indicator "v1.0.0" in Window Title, About Dialog, and Windows Executable Metadata.
+- **Resizing**: Configured Grid Layout in `gui.py` to allow "Old Spec", "New Spec", and "Output Folder" entry fields to expand horizontally when the window is resized.
+- **Verification**: Rebuilt executable and verified that maximizing the window now correctly stretches the input fields.
