@@ -28,6 +28,7 @@ def build():
         "--add-data=app_icon.png;.",
         "--add-data=app_icon.ico;.",
         "--name=OpenAPIDiffTool",
+        "--version-file=version_info.txt",
         "gui.py"
     ]
     subprocess.check_call(cmd)

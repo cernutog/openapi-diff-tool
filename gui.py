@@ -225,16 +225,19 @@ class PreferencesDialog:
                 self.config_manager.delete_variable(key)
             self._load_vars()
 
+
+VERSION = "1.0.0"
+
 class OpenAPIDiffGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("OpenAPI Diff Tool")
+        self.root.title(f"OpenAPI Diff Tool v{VERSION}")
         self.root.geometry("600x600")
         
         # Set AppUserModelID (Critical for Windows Taskbar Icon)
         try:
             import ctypes
-            myappid = 'mycompany.myproduct.subproduct.version' # Arbitrary string
+            myappid = f'cernutog.openapi_diff_tool.v{VERSION}' # Unique ID
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass
@@ -277,6 +280,19 @@ class OpenAPIDiffGUI:
         file_menu.add_command(label="Preferences...", command=self._open_preferences)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self._show_about)
+
+    def _show_about(self):
+        msg = (
+            f"OpenAPI Diff Tool\n"
+            f"Version {VERSION}\n\n"
+            f"A powerful tool for comparing OpenAPI specifications.\n\n"
+            f"Copyright (c) 2025 Giuseppe Cernuto"
+        )
+        messagebox.showinfo("About", msg)
 
     def _init_ui(self):
         # Padding options
