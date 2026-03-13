@@ -17,6 +17,7 @@ class Insight:
     severity: Severity
     category: str # ENDPOINT, PARAMETER, SCHEMA, SECURITY, etc.
     context: Optional[str] = None # e.g., "GET /users"
+    affected_items: Optional[List[str]] = None # e.g., ["prop_a", "prop_b"]
 
 class HeuristicEngine:
     def __init__(self, diff: Any):
@@ -30,7 +31,41 @@ class HeuristicEngine:
         self._analyze_parameters()
         self._analyze_schemas()
         self._analyze_request_bodies()
+        self._analyze_removed_components() # NEW: Detect full component removals
         return self.insights
+
+    def _analyze_removed_components(self):
+        """
+        Detects when entire shared components are removed.
+        """
+        if not hasattr(self.diff, 'removed_components'):
+            return
+            
+        for c_type, items in self.diff.removed_components.items():
+            if not items: continue
+            
+            # Map type to user-friendly name
+            type_map = {
+                'schemas': 'Schema',
+                'parameters': 'Parameter',
+                'responses': 'Response',
+                'requestBodies': 'Request Body',
+                'examples': 'Example'
+            }
+            friendly_type = type_map.get(c_type, c_type)
+            # Examples are never critical (Impact LOW)
+            severity = Severity.LOW if c_type == 'examples' else Severity.CRITICAL
+            
+            for name in items:
+                self.insights.append(Insight(
+                    rule_id="C01", # Component Removed
+                    title=f"{friendly_type} Removed",
+                    description=f"The shared {friendly_type} definition '{name}' has been removed.",
+                    severity=severity,
+                    category="COMPONENT",
+                    context=f"Component: {friendly_type}: {name}",
+                    affected_items=[name]
+                ))
 
     def _analyze_endpoints(self):
         """
@@ -45,7 +80,8 @@ class HeuristicEngine:
                     description=f"The resource '{path}' has been completely removed. Clients using this endpoint will receive 404 errors.",
                     severity=Severity.CRITICAL,
                     category="ENDPOINT",
-                    context=path
+                    context=path,
+                    affected_items=[path]
                 ))
         
         if hasattr(self.diff, 'modified_paths'):
@@ -53,13 +89,15 @@ class HeuristicEngine:
                 # E01 (Partial): Specific Method Removed
                 if 'removed_ops' in p_changes:
                     for method in p_changes['removed_ops']:
+                        context = f"{method.upper()} {path}"
                         self.insights.append(Insight(
                             rule_id="E01",
                             title="Operation Removed",
                             description=f"The HTTP method '{method.upper()}' for '{path}' has been removed.",
                             severity=Severity.CRITICAL,
                             category="ENDPOINT",
-                            context=f"{method.upper()} {path}"
+                            context=context,
+                            affected_items=[method.upper()]
                         ))
 
                 if 'modified_ops' in p_changes:
@@ -109,7 +147,8 @@ class HeuristicEngine:
                                 description="Summary or description has been updated.",
                                 severity=Severity.INFO,
                                 category="ENDPOINT",
-                                context=context
+                                context=context,
+                                affected_items=["Summary/Description"]
                             ))
 
                         # E06: Tags Modified
@@ -142,28 +181,30 @@ class HeuristicEngine:
                 context = f"{method.upper()} {path}"
 
                 # P01: Parameter Removed
-                if 'removed' in params:
-                    for p_name in params['removed']:
-                        self.insights.append(Insight(
-                            rule_id="P01",
-                            title="Parameter Removed",
-                            description=f"Parameter '{p_name}' has been removed. Clients sending it may receive errors.",
-                            severity=Severity.CRITICAL,
-                            category="PARAMETER",
-                            context=context
-                        ))
+                if params.get('removed'):
+                    # Ensure context uses uppercase method for matching
+                    context = context.upper() if " " not in context else context
+                    self.insights.append(Insight(
+                        rule_id="P01",
+                        title="Parameter Removed",
+                        description=f"Parameters removed: {', '.join(params['removed'])}.",
+                        severity=Severity.CRITICAL,
+                        category="PARAMETER",
+                        context=context,
+                        affected_items=params['removed']
+                    ))
 
                 # P02: Required Param Added
                 if 'added_required' in params:
-                    for p_name in params['added_required']:
-                        self.insights.append(Insight(
-                            rule_id="P02",
-                            title="New Required Parameter",
-                            description=f"New required parameter '{p_name}' added. Existing clients will fail.",
-                            severity=Severity.CRITICAL,
-                            category="PARAMETER",
-                            context=context
-                        ))
+                    self.insights.append(Insight(
+                        rule_id="P02",
+                        title="New Required Parameter",
+                        description=f"New required parameters added: {', '.join(params['added_required'])}.",
+                        severity=Severity.CRITICAL,
+                        category="PARAMETER",
+                        context=context,
+                        affected_items=params['added_required']
+                    ))
 
                 # P03: Optional Param Added
                 if 'added_optional' in params:
@@ -227,7 +268,8 @@ class HeuristicEngine:
                                     description=f"Type changed from {s_diff['type']['old']} to {s_diff['type']['new']}.",
                                     severity=Severity.CRITICAL,
                                     category="PARAMETER",
-                                    context=p_context
+                                    context=p_context,
+                                    affected_items=[p_name]
                                 ))
                             
                             # P10: Enum Removed
@@ -265,7 +307,8 @@ class HeuristicEngine:
                         description=f"Properties made required: {', '.join(added)}.",
                         severity=Severity.CRITICAL,
                         category="SCHEMA",
-                        context=context
+                        context=context,
+                        affected_items=list(added)
                     ))
 
             # Properties
@@ -273,14 +316,16 @@ class HeuristicEngine:
                 props = s_changes['properties']
                 
                 # S01: Property Removed
-                if 'removed' in props:
+                if props.get('removed'):
+                    names = sorted(props['removed'])
                     self.insights.append(Insight(
                         rule_id="S01",
                         title="Property Removed",
-                        description=f"Properties removed: {', '.join(props['removed'])}.",
+                        description=f"Properties removed: {', '.join(names)}.",
                         severity=Severity.CRITICAL,
                         category="SCHEMA",
-                        context=context
+                        context=context,
+                        affected_items=names
                     ))
 
                 # Modified Properties
@@ -296,7 +341,8 @@ class HeuristicEngine:
                                 description=f"Type changed from {p_diff['type']['old']} to {p_diff['type']['new']}.",
                                 severity=Severity.CRITICAL,
                                 category="SCHEMA",
-                                context=p_context
+                                context=p_context,
+                                affected_items=[prop]
                             ))
                         
                         # S08: Pattern Changed
@@ -307,7 +353,8 @@ class HeuristicEngine:
                                 description="Validation pattern has been modified.",
                                 severity=Severity.HIGH,
                                 category="SCHEMA",
-                                context=p_context
+                                context=p_context,
+                                affected_items=[prop]
                             ))
 
             # S12: OneOf/AnyOf Changes
@@ -319,7 +366,8 @@ class HeuristicEngine:
                         description=f"Polymorphic options for {comb} have changed.",
                         severity=Severity.HIGH,
                         category="SCHEMA",
-                        context=context
+                        context=context,
+                        affected_items=[comb]
                     ))
 
     def _analyze_request_bodies(self):

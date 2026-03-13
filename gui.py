@@ -20,6 +20,7 @@ from impact_generator import ImpactDocxGenerator
 from analytic_generator import AnalyticDocxGenerator
 from synthetic_generator import SyntheticDocxGenerator
 from config_manager import ConfigManager
+from dependency_tracer import DependencyTracer
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -226,7 +227,7 @@ class PreferencesDialog:
             self._load_vars()
 
 
-VERSION = "1.0.0"
+VERSION = "1.2.0"
 
 class OpenAPIDiffGUI:
     def __init__(self, root):

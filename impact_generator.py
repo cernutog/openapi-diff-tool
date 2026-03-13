@@ -2,11 +2,13 @@ import datetime
 import os
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+import difflib
+from dependency_tracer import DependencyTracer
 
 # OXML Helpers
 def get_or_add_child(parent, tag_name, ordering=None):
@@ -67,9 +69,16 @@ class ImpactDocxGenerator:
         if not self.has_template:
             self._setup_page_layout()
         
-        # "AI" Analysis Cache
         self.analysis_insights = []
         self.checklist_items = []
+        
+        # Initialize Dependency Tracers
+        self.tracer = DependencyTracer(new_spec)
+        self.tracer.resolve_transitive_impact()
+        
+        self.old_tracer = DependencyTracer(old_spec)
+        self.old_tracer.resolve_transitive_impact()
+            
         self._run_smart_analysis()
 
     def generate(self, output_path):
@@ -77,7 +86,7 @@ class ImpactDocxGenerator:
         self._add_spec_metadata()
         self._add_migration_notice()
         self._add_endpoint_impact_matrix()
-        self._add_detailed_schema_analysis()
+        self._add_detailed_component_analysis()
         self._add_technical_deep_dive()
         self._add_implementation_checklist()
         
@@ -332,12 +341,21 @@ class ImpactDocxGenerator:
             text_color = RGBColor(12, 84, 96)
             intro_text = "Minor changes detected:"
 
-        # Calculate stats
-        categories = {}
+        # Calculate stats and collect items
+        categories = {} # cat_name -> {'count': int, 'items': set, 'severity': str}
+        # Show all Critical and High changes in summary
+        significant_severities = ['CRITICAL', 'HIGH']
+        
         for i in self.analysis_insights:
-            if i.get('severity') == max_severity:
+            sev = i.get('severity')
+            if sev in significant_severities:
                 cat = i.get('title', 'Unknown')
-                categories[cat] = categories.get(cat, 0) + 1
+                if cat not in categories:
+                    categories[cat] = {'count': 0, 'items': set(), 'severity': sev}
+                categories[cat]['count'] += 1
+                if i.get('affected_items'):
+                    for item in i['affected_items']:
+                        if item: categories[cat]['items'].add(str(item))
         
         # Title OUTSIDE the box
         p_title = self.doc.add_paragraph()
@@ -388,19 +406,31 @@ class ImpactDocxGenerator:
         p.add_run("\n")
 
         # Bullet points
-        for cat, count in categories.items():
+        for cat, data in categories.items():
+            count = data['count']
+            items = sorted(list(data['items']))
+            
             # Simple Pluralization
             display_cat = cat
             if count > 1:
                 if "Removed" in cat:
-                     display_cat = cat.replace("Removed", "Removals") # e.g. Property Removed -> Property Removals
+                     display_cat = cat.replace("Removed", "Removals")
                      if "Property" in cat: display_cat = "Property Removals"
                      if "Endpoint" in cat: display_cat = "Endpoint Removals"
                      if "Parameter" in cat: display_cat = "Parameter Removals"
                 elif cat.endswith('y'): display_cat = cat[:-1] + "ies"
                 elif not cat.endswith('s'): display_cat = cat + "s"
             
-            run_bullet = p.add_run(f" \u2022 {count} {display_cat}")
+            main_text = f" \u2022 {count} {display_cat}"
+            if items:
+                # Limit to first 10 items for better detail in summary
+                limit = 10
+                item_str = ", ".join(items[:limit])
+                if len(items) > limit:
+                    item_str += f", and {len(items)-limit} more"
+                main_text += f": {item_str}" # Changed (items) to : items for more prominence
+            
+            run_bullet = p.add_run(main_text)
             run_bullet.font.color.rgb = text_color
             run_bullet.font.size = Pt(10)
             p.add_run("\n")
@@ -488,8 +518,9 @@ class ImpactDocxGenerator:
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
         
         # Optimized Column Widths (Total 7.0)
-        # Method 0.5, Impact 4.7, Resource 1.8
-        widths = [Inches(1.8), Inches(0.5), Inches(4.7)]
+        # OLD: Method 0.5, Impact 4.7, Resource 1.8
+        # NEW: Method 0.8, Impact 4.4, Resource 1.8
+        widths = [Inches(1.8), Inches(0.8), Inches(4.4)]
         for i, width in enumerate(widths):
             table.cell(0, i).width = width
             
@@ -508,27 +539,61 @@ class ImpactDocxGenerator:
             bottom.set(qn('w:sz'), '12')
             bottom.set(qn('w:color'), '000000')
 
-        # 1. Modified Paths
+        # 0. Collect all relevant endpoints
+        endpoints_to_show = set() # (path, method, source_data)
+        
+        # Modified Paths (Structural)
         if hasattr(self.diff, 'modified_paths'):
             for path, p_changes in self.diff.modified_paths.items():
                 if 'modified_ops' in p_changes:
                     for op, op_changes in p_changes['modified_ops'].items():
-                        self._add_impact_row(table, path, op.upper(), op_changes)
+                        endpoints_to_show.add((path, op.upper()))
                 if 'removed_ops' in p_changes:
                     for op in p_changes['removed_ops']:
-                        self._add_impact_row(table, path, op.upper(), {'removed': True})
+                        endpoints_to_show.add((path, op.upper()))
 
-        # 2. New Paths
+        # New Paths
         if hasattr(self.diff, 'new_paths'):
             for path in self.diff.new_paths:
-                self._add_impact_row(table, path, "ALL", {'new': True})
+                p_item = self.new_spec.get('paths', {}).get(path, {})
+                methods = [m.upper() for m in p_item.keys() if m.lower() in ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace']]
+                for m in (methods if methods else ['GET']):
+                    endpoints_to_show.add((path, m))
 
-        # 3. Removed Paths
+        # Removed Paths
         if hasattr(self.diff, 'removed_paths'):
             for path in self.diff.removed_paths:
-                self._add_impact_row(table, path, "ALL", {'removed': True})
+                p_item = self.old_spec.get('paths', {}).get(path, {})
+                methods = [m.upper() for m in p_item.keys() if m.lower() in ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace']]
+                for m in (methods if methods else ['GET']):
+                    endpoints_to_show.add((path, m))
+
+        # Indirectly Impacted Endpoints (from tracer/insights)
+        for method, path in self.endpoint_insights.keys():
+            endpoints_to_show.add((path, method))
+
+        # Sort endpoints by path then method
+        sorted_endpoints = sorted(list(endpoints_to_show))
+
+        # Add Rows
+        for path, method in sorted_endpoints:
+            # Reconstruct 'changes' if available in diff
+            p_changes = self.diff.modified_paths.get(path, {}) if hasattr(self.diff, 'modified_paths') else {}
+            op_changes = {}
+            if 'modified_ops' in p_changes and method.lower() in p_changes['modified_ops']:
+                op_changes = p_changes['modified_ops'][method.lower()]
+            elif 'removed_ops' in p_changes and method.lower() in p_changes['removed_ops']:
+                op_changes = {'removed': True}
+            
+            # Check for new/removed path
+            if hasattr(self.diff, 'new_paths') and path in self.diff.new_paths:
+                op_changes = {'new': True}
+            elif hasattr(self.diff, 'removed_paths') and path in self.diff.removed_paths:
+                op_changes = {'removed': True}
+
+            self._add_impact_row(table, path, method, op_changes)
         
-        # Add Spacer after table (Increased)
+        # Add Spacer after table
         spacer = self.doc.add_paragraph()
         spacer.paragraph_format.space_after = Pt(24)
 
@@ -539,12 +604,9 @@ class ImpactDocxGenerator:
         for cell in row.cells:
             tcPr = cell._tc.get_or_add_tcPr()
             tcBorders = get_or_add_child(tcPr, 'w:tcBorders', TC_PR_ORDER)
-            
-            # Clear other borders explicitly
             for side in ['top', 'left', 'right']:
                 tag = get_or_add_child(tcBorders, f'w:{side}')
                 tag.set(qn('w:val'), 'nil')
-
             bottom = get_or_add_child(tcBorders, 'w:bottom')
             bottom.set(qn('w:val'), 'single')
             bottom.set(qn('w:sz'), '4')
@@ -561,75 +623,150 @@ class ImpactDocxGenerator:
         p = cell.paragraphs[0]
         p.style = 'Table Text'
         
-        impacts = self._analyze_impact_for_row(changes)
+        impacts = self._analyze_impact_for_row(path, method, changes)
         for severity, msg in impacts:
             self._add_pill_badge(p, severity)
             p.add_run(f" {msg}\n")
 
-    def _analyze_impact_for_row(self, changes):
+    def _analyze_impact_for_row(self, path, method, changes):
+        """
+        Calculates impact using deep structural analysis and heuristic insights.
+        """
         impacts = []
         
+        # 1. Structural Changes (Mandatory Details)
         if changes.get('new'):
             return [('LOW', "New endpoint available.")]
         if changes.get('removed'):
             return [('CRITICAL', "Endpoint removed. Breaking change.")]
 
-        if 'parameters' in changes:
-            params = changes['parameters']
-            if 'removed' in params:
-                 for p in params['removed']: impacts.append(('CRITICAL', f"Param '{p}' removed."))
-            if 'new' in params:
-                 for p in params['new']: impacts.append(('HIGH', f"New param '{p}'."))
-            if 'modified' in params:
-                 for p, diff in params['modified'].items(): impacts.append(('HIGH', f"Param '{p}' modified."))
-
-        if 'requestBody' in changes:
-            impacts.append(('CRITICAL', "Request Body schema changed."))
-
-        if 'responses' in changes:
-            impacts.append(('HIGH', "Response schema changed."))
+        # A) HEURISTIC INSIGHTS (Advice/Context)
+        methods = [m.strip() for m in method.split(",")]
+        related_insights = []
+        for m in methods:
+            related_insights.extend(self.endpoint_insights.get((m.upper(), path), []))
+        
+        # Add high-level insights first
+        added_titles = set()
+        for i in related_insights:
+            msg = i['title']
+            if i.get('affected_items'):
+                msg += f": {', '.join(map(str, i['affected_items']))}"
             
+            if msg not in added_titles:
+                impacts.append((i['severity'], msg))
+                added_titles.add(msg)
+
+        # B) DEEP STRUCTURAL SCAN (Technical Truth)
+        # This recursively finds all removals directly in the diff for this operation
+        details = self._crawl_diff_for_impacts(changes)
+        for detail in details:
+            impacts.append(('CRITICAL', detail))
+
+        # 3. Generic Fallbacks for things not caught above
         if not impacts:
-            impacts.append(('LOW', "Minor metadata changes."))
+            if 'responses' in changes:
+                impacts.append(('HIGH', "Response schema updated."))
+            else:
+                impacts.append(('INFO', "Documentation or metadata updated."))
+                
         return impacts
 
-    def _add_detailed_schema_analysis(self):
-        self._add_section_header("2", "DETAILED SCHEMA ANALYSIS")
+    def _crawl_diff_for_impacts(self, diff_node, prefix=""):
+        """
+        Recursively extracts removed items from a diff structure.
+        """
+        found = []
+        if not isinstance(diff_node, dict): return found
+
+        # 1. Handle Removed Parameters
+        if 'parameters' in diff_node and diff_node['parameters'].get('removed'):
+            p_list = ", ".join(diff_node['parameters']['removed'])
+            found.append(f"Parameter Removed: {p_list}")
+
+        # 2. Handle Removed Properties
+        if 'properties' in diff_node and diff_node['properties'].get('removed'):
+            p_list = ", ".join(diff_node['properties']['removed'])
+            loc = f" ({prefix})" if prefix else ""
+            found.append(f"Property Removed{loc}: {p_list}")
+
+        # 3. Handle Enum removals
+        if 'enum' in diff_node and diff_node['enum'].get('removed'):
+             e_list = ", ".join(map(str, diff_node['enum']['removed']))
+             found.append(f"Enum Values Removed: {e_list}")
+
+        # 4. Handle Specific Logic (Body/Responses/Items)
+        # Scan content maps (RequestBody/Responses)
+        if 'content' in diff_node and 'modified' in diff_node.get('content', {}):
+            for mt, mt_diff in diff_node['content']['modified'].items():
+                found.extend(self._crawl_diff_for_impacts(mt_diff, f"Body {mt}"))
+
+        if 'responses' in diff_node and 'modified' in diff_node.get('responses', {}):
+            for code, code_diff in diff_node['responses']['modified'].items():
+                found.extend(self._crawl_diff_for_impacts(code_diff, f"Resp {code}"))
+
+        if 'schema' in diff_node:
+            found.extend(self._crawl_diff_for_impacts(diff_node['schema'], prefix))
+
+        if 'items' in diff_node:
+             found.extend(self._crawl_diff_for_impacts(diff_node['items'], f"{prefix}[]"))
+
+        # Recurse into modified properties to find nested removals
+        if 'properties' in diff_node and 'modified' in diff_node.get('properties', {}):
+            for p_name, p_diff in diff_node['properties']['modified'].items():
+                new_prefix = f"{prefix}.{p_name}" if prefix else p_name
+                found.extend(self._crawl_diff_for_impacts(p_diff, new_prefix))
+
+        return list(dict.fromkeys(found)) # Deduplicate
+            
+        # Prioritize CRITICAL over others if multiple
+        impacts.sort(key=lambda x: {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'INFO': 4}.get(x[0], 5))
         
-        # Gather all items (Modified + Pure Renames)
+        return impacts[:3] # Limit to top 3 for space
+
+    def _add_detailed_component_analysis(self):
+        self._add_section_header("2", "DETAILED COMPONENT ANALYSIS")
+        
+        # Gather all items (Modified + Pure Renames) for all types
+        comp_types = ['schemas', 'parameters', 'responses', 'headers', 'securitySchemes', 'examples', 'links', 'callbacks']
         items_to_show = []
         
-        # 1. Modified
-        if hasattr(self.diff, 'modified_components') and 'schemas' in self.diff.modified_components:
-            for s_name, s_changes in self.diff.modified_components['schemas'].items():
-                items_to_show.append({'name': s_name, 'data': s_changes, 'type': 'modified'})
+        for c_type in comp_types:
+            # 1. Modified
+            if hasattr(self.diff, 'modified_components') and c_type in self.diff.modified_components:
+                for s_name, s_changes in self.diff.modified_components[c_type].items():
+                    items_to_show.append({'name': s_name, 'data': s_changes, 'type': 'modified', 'c_type': c_type})
 
-        # 2. Pure Renames
-        if hasattr(self.diff, 'renamed_components') and 'schemas' in self.diff.renamed_components:
-            mod_keys = self.diff.modified_components.get('schemas', {}).keys()
-            for old, new in self.diff.renamed_components['schemas'].items():
-                if old not in mod_keys:
-                    items_to_show.append({'name': old, 'data': {'new_name': new}, 'type': 'renamed'})
+            # 2. Pure Renames
+            if hasattr(self.diff, 'renamed_components') and c_type in self.diff.renamed_components:
+                mod_keys = self.diff.modified_components.get(c_type, {}).keys()
+                for old, new in self.diff.renamed_components[c_type].items():
+                    if old not in mod_keys:
+                        items_to_show.append({'name': old, 'data': {'new_name': new}, 'type': 'renamed', 'c_type': c_type})
+
+            # 3. Removed
+            if hasattr(self.diff, 'removed_components') and c_type in self.diff.removed_components:
+                for name in self.diff.removed_components[c_type]:
+                    # Ignore if it was part of a rename
+                    if name not in self.diff.renamed_components.get(c_type, {}):
+                        items_to_show.append({'name': name, 'data': {'removed': True}, 'type': 'removed', 'c_type': c_type})
         
         if items_to_show:
-            table = self.doc.add_table(rows=1, cols=3)
+            table = self.doc.add_table(rows=1, cols=4)
             self._remove_all_borders(table)
-            self._set_table_fixed_width(table, 7.0) # Increased to 7.0 inches
+            self._set_table_fixed_width(table, 7.0) 
             table.alignment = WD_TABLE_ALIGNMENT.LEFT
             
-            # Optimized Column Widths (Total 7.0)
-            widths = [Inches(2.0), Inches(0.6), Inches(4.4)]
+            widths = [Inches(1.5), Inches(0.8), Inches(3.3), Inches(1.4)]
             for i, width in enumerate(widths):
                 table.cell(0, i).width = width
             
-            # Clean Header
             hdr_cells = table.rows[0].cells
-            headers = ["SCHEMA", "TYPE", "CHANGE DETAILS"]
+            headers = ["COMPONENT", "TYPE", "CHANGE DETAILS", "AFFECTED ENDPOINTS"]
             for i, text in enumerate(headers):
                 hdr_cells[i].text = text
                 p = hdr_cells[i].paragraphs[0]
                 p.style = 'Table Header'
-                # Bottom border only for header
                 tcPr = hdr_cells[i]._tc.get_or_add_tcPr()
                 tcBorders = get_or_add_child(tcPr, 'w:tcBorders', TC_PR_ORDER)
                 bottom = get_or_add_child(tcBorders, 'w:bottom')
@@ -637,20 +774,21 @@ class ImpactDocxGenerator:
                 bottom.set(qn('w:sz'), '12')
                 bottom.set(qn('w:color'), '000000')
 
-            # Sort by name
-            items_to_show.sort(key=lambda x: x['name'])
+            # Sort by component type then name
+            items_to_show.sort(key=lambda x: (x['c_type'], x['name']))
 
             for item in items_to_show:
-                self._add_schema_row(table, item)
+                self._add_component_row(table, item)
 
         # Add Spacer after table
         spacer = self.doc.add_paragraph()
         spacer.paragraph_format.space_after = Pt(24)
 
-    def _add_schema_row(self, table, item):
+    def _add_component_row(self, table, item):
         s_name = item['name']
         s_changes = item['data']
         item_type = item['type']
+        c_type = item.get('c_type', 'schemas')
 
         row = table.add_row()
         
@@ -658,12 +796,9 @@ class ImpactDocxGenerator:
         for cell in row.cells:
             tcPr = cell._tc.get_or_add_tcPr()
             tcBorders = get_or_add_child(tcPr, 'w:tcBorders', TC_PR_ORDER)
-            
-            # Clear other borders explicitly
             for side in ['top', 'left', 'right']:
                 tag = get_or_add_child(tcBorders, f'w:{side}')
                 tag.set(qn('w:val'), 'nil')
-
             bottom = get_or_add_child(tcBorders, 'w:bottom')
             bottom.set(qn('w:val'), 'single')
             bottom.set(qn('w:sz'), '4')
@@ -672,12 +807,12 @@ class ImpactDocxGenerator:
         # Column 1: Name (Handle Rename)
         display_name = s_name
         rename_note = ""
+        renamed_map = self.diff.renamed_components.get(c_type, {})
         
         if item_type == 'renamed':
             display_name = f"{s_name} \u2192 {s_changes['new_name']}"
         elif item_type == 'modified':
-            # Check if also renamed
-            new_name = self.diff.renamed_components.get('schemas', {}).get(s_name)
+            new_name = renamed_map.get(s_name)
             if new_name:
                 display_name = new_name
                 rename_note = f"\n(was {s_name})"
@@ -692,11 +827,7 @@ class ImpactDocxGenerator:
             run.font.color.rgb = RGBColor(100, 100, 100)
         
         # Column 2: Type
-        if item_type == 'renamed':
-             row.cells[1].text = "Object" # Assumption
-        else:
-             type_val = s_changes.get('type', {}).get('new')
-             row.cells[1].text = type_val.capitalize() if type_val else 'Object'
+        row.cells[1].text = c_type[:-1].capitalize() if not c_type.endswith('ies') else c_type[:-3].capitalize() + 'y'
         row.cells[1].paragraphs[0].style = 'Table Text'
         
         # Column 3: Details
@@ -706,18 +837,73 @@ class ImpactDocxGenerator:
         
         if item_type == 'renamed':
             self._add_pill_badge(p, "RENAMED")
-            p.add_run("Schema renamed. Content is identical.")
-        else:
+            p.add_run(f" Component renamed. Content is identical.")
+        elif item_type == 'removed':
+            row.cells[2].text = f"The entire {c_type[:-1]} definition has been removed. Review dependencies."
+            row.cells[2].paragraphs[0].style = 'Table Text'
+            row.cells[2].paragraphs[0].runs[0].font.color.rgb = RGBColor(180, 0, 0) # Red-ish
+        else: # modified or renamed with changes
             if rename_note:
                  self._add_pill_badge(p, "RENAMED")
-            self._render_schema_diff_details(p, s_changes)
+            if c_type == 'schemas':
+                self._render_schema_diff_details(p, s_changes)
+            else:
+                self._render_general_diff_details(p, s_changes)
+        display_name_clean = s_name
+        if item_type == 'renamed':
+             display_name_clean = s_changes['new_name']
+        elif item_type == 'modified':
+             if s_name in renamed_map:
+                 display_name_clean = renamed_map[s_name]
+
+        impacts = self.tracer.get_impacted_endpoints(display_name_clean)
+        
+        row.cells[3].paragraphs[0].style = 'Table Text'
+        if impacts:
+            unique_paths = sorted(list(set([f"{i['method']} {i['path']}" for i in impacts])))
+            DISPLAY_LIMIT = 5
+            for p_str in unique_paths[:DISPLAY_LIMIT]:
+                row.cells[3].add_paragraph(p_str, style='Table Text')
+            if len(unique_paths) > DISPLAY_LIMIT:
+                row.cells[3].add_paragraph(f"... +{len(unique_paths)-DISPLAY_LIMIT} more", style='Table Text')
+        else:
+             row.cells[3].text = "-"
+             row.cells[3].paragraphs[0].style = 'Table Text'
+
+    def _render_general_diff_details(self, p, changes):
+        """
+        Renders simple attribute changes for a component in a single paragraph.
+        """
+        first = True
+        for key, val in changes.items():
+            if key == '__rename_info__': continue
+            if isinstance(val, dict) and 'old' in val and 'new' in val:
+                if not first:
+                    p.add_run("\n")
+                first = False
+                
+                # Attribute Name
+                run = p.add_run(f"{key}: ")
+                run.font.bold = True
+                
+                # Values
+                if key == 'description':
+                    # Simplified rich diff for impact report (just show old/new inline)
+                    p.add_run(f"Changed")
+                else:
+                    old_v = str(val['old'])
+                    new_v = str(val['new'])
+                    # Limit length
+                    if len(old_v) > 50: old_v = old_v[:47] + "..."
+                    if len(new_v) > 50: new_v = new_v[:47] + "..."
+                    p.add_run(f"'{old_v}' \u2192 '{new_v}'")
 
     def _render_schema_diff_details(self, p, changes):
         # 1. Properties
         if 'properties' in changes:
             props = changes['properties']
-            if 'added' in props:
-                for prop in props['added']:
+            if 'new' in props:
+                for prop in props['new']:
                     self._add_symbol_run(p, "+", "28A745") # Green
                     p.add_run(f" {prop} (new)\n")
             if 'removed' in props:
@@ -755,6 +941,14 @@ class ImpactDocxGenerator:
                             ref = item.get('$ref', 'Inline Schema')
                             self._add_symbol_run(p, "+", "17A2B8") # Cyan
                             p.add_run(f" {comb}: Added option {ref}\n")
+            
+        # 4. Description
+        if 'description' in changes:
+            d_diff = changes['description']
+            self._add_symbol_run(p, "~", "FD7E14") # Orange
+            p.add_run(" Description changed: ")
+            self._render_rich_diff_inline(p, d_diff.get('old', ''), d_diff.get('new', ''))
+            p.add_run("\n")
 
     def _add_technical_deep_dive(self):
         self._add_section_header("3", "TECHNICAL DEEP DIVE")
@@ -838,16 +1032,18 @@ class ImpactDocxGenerator:
         from heuristic_engine import HeuristicEngine, Severity
         
         engine = HeuristicEngine(self.diff)
-        insights = engine.run()
+        insights_objects = engine.run()
         
-        # Map Insights to Report Format
-        for insight in insights:
+        # Map Insights to Report Format (List of Dicts for internal consistency)
+        self.analysis_insights = []
+        for insight in insights_objects:
             self.analysis_insights.append({
                 'title': insight.title,
                 'description': insight.description,
                 'severity': insight.severity.value,
                 'rule_id': insight.rule_id,
-                'context': insight.context # Added Context
+                'context': insight.context,
+                'affected_items': insight.affected_items
             })
             
             # Generate Checklist Items based on Rule ID
@@ -863,6 +1059,41 @@ class ImpactDocxGenerator:
                 self.checklist_items.append(f"Update deserializers for {insight.context} to handle new polymorphic types.")
             elif insight.rule_id == 'B05':
                 self.checklist_items.append(f"Ensure request body is provided for {insight.context}.")
+
+        # Collect insights per endpoint for matrix synchronization
+        self.endpoint_insights = {}
+        for insight in self.analysis_insights:
+            ctx = insight.get('context')
+            if not ctx: continue
+            
+            # ROUTING LOGIC:
+            # 1. If it starts with "Component: ", it belongs in Section 2, NOT Section 1 (unless traced)
+            if ctx.startswith("Component: "):
+                # If it's a schema, we TRACE it to endpoints
+                if "Schema: " in ctx:
+                    schema_name = ctx.split(": ")[-1]
+                    # Use BOTH tracers to find usages (covers both modifications and removals)
+                    impacted = self.tracer.get_impacted_endpoints(schema_name)
+                    impacted_old = self.old_tracer.get_impacted_endpoints(schema_name)
+                    
+                    # Merge and deduplicate impacted endpoints
+                    merged_impacted = { (i['method'], i['path']) for i in (impacted + impacted_old) }
+                    
+                    for m, p in merged_impacted:
+                        key = (m.upper(), p)
+                        self.endpoint_insights.setdefault(key, []).append(insight)
+                # Others (Examples, etc.) stay only in component analysis section
+                continue
+            
+            # 2. Traditional Endpoint Mapping (METHOD PATH)
+            parts = ctx.split(" ", 1)
+            if len(parts) == 2:
+                m_upper = parts[0].strip().upper()
+                p_val = parts[1].strip()
+                # Validation: Does the method look like an HTTP method?
+                if m_upper in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD', 'TRACE']:
+                    key = (m_upper, p_val)
+                    self.endpoint_insights.setdefault(key, []).append(insight)
         
         # Deduplicate Checklist
         self.checklist_items = list(dict.fromkeys(self.checklist_items))
@@ -874,7 +1105,8 @@ class ImpactDocxGenerator:
                 'description': "Changes appear to be minor or additive. Standard regression testing is recommended.",
                 'severity': 'LOW',
                 'rule_id': 'GEN',
-                'context': None
+                'context': None,
+                'affected_items': None
             })
 
     def _summarize_diff(self, diff):
@@ -883,6 +1115,7 @@ class ImpactDocxGenerator:
         if 'enum' in diff: parts.append("Enum values changed")
         if 'pattern' in diff: parts.append("Regex pattern changed")
         if 'minimum' in diff or 'maximum' in diff: parts.append("Range constraints changed")
+        if 'description' in diff: parts.append("Description changed")
         return ", ".join(parts) if parts else "Constraint changed"
 
     def _add_symbol_run(self, paragraph, symbol, color_hex):
@@ -918,3 +1151,115 @@ class ImpactDocxGenerator:
         else: 
             shd.set(qn('w:fill'), 'E2E3E5') # Light Grey
             run.font.color.rgb = RGBColor(56, 61, 65) # Dark Grey
+
+    def _render_rich_diff_inline(self, p, text_old, text_new):
+        """Renders description diff inline with line splitting and color accuracy."""
+        if not isinstance(text_old, str): text_old = str(text_old or "")
+        if not isinstance(text_new, str): text_new = str(text_new or "")
+        
+        # Split into lines
+        lines_old = text_old.splitlines(keepends=True)
+        lines_new = text_new.splitlines(keepends=True)
+        
+        s = difflib.SequenceMatcher(None, lines_old, lines_new, autojunk=False)
+        opcodes = s.get_opcodes()
+        
+        # Structural split: separate modifications from removals/additions
+        refined_opcodes = []
+        for tag, i1, i2, j1, j2 in opcodes:
+            if tag == 'replace':
+                old_count = i2 - i1
+                new_count = j2 - j1
+                if old_count > new_count:
+                    refined_opcodes.append(('replace', i1, i1 + new_count, j1, j2))
+                    refined_opcodes.append(('delete', i1 + new_count, i2, j2, j2))
+                elif new_count > old_count:
+                    refined_opcodes.append(('replace', i1, i2, j1, j1 + old_count))
+                    refined_opcodes.append(('insert', i2, i2, j1 + old_count, j2))
+                else:
+                    refined_opcodes.append((tag, i1, i2, j1, j2))
+            else:
+                refined_opcodes.append((tag, i1, i2, j1, j2))
+
+        def apply_shading(run, color_hex):
+            rPr = run._r.get_or_add_rPr()
+            shd = OxmlElement('w:shd')
+            shd.set(qn('w:val'), 'clear')
+            shd.set(qn('w:fill'), color_hex)
+            rPr.append(shd)
+
+        def render_word_diff_inline(para, t_old, t_new):
+            import re
+            def split_words(text):
+                return re.findall(r'\w+|[^\w\s]|\s+', text)
+            
+            w_old = split_words(t_old)
+            w_new = split_words(t_new)
+            ws = difflib.SequenceMatcher(None, w_old, w_new, autojunk=False)
+            w_ops = ws.get_opcodes()
+            
+            # Refined merging for inline
+            merged_w_ops = []
+            wi = 0
+            while wi < len(w_ops):
+                tag, i1, i2, j1, j2 = w_ops[wi]
+                if tag == 'equal':
+                    merged_w_ops.append((tag, i1, i2, j1, j2))
+                    wi += 1
+                else:
+                    sw_i1, lw_i2 = i1, i1
+                    sw_j1, lw_j2 = j1, j2
+                    # Track what we actually saw
+                    actual_o = tag in ('delete', 'replace')
+                    actual_n = tag in ('insert', 'replace')
+                    sw_i1, lw_i2 = i1, i2
+                    sw_j1, lw_j2 = j1, j2
+                    
+                    wk = wi + 1
+                    while wk < len(w_ops):
+                        nt, ni1, ni2, nj1, nj2 = w_ops[wk]
+                        is_bridge = False
+                        if nt == 'equal':
+                            eq_text = "".join(w_old[ni1:ni2])
+                            if len(eq_text) <= 3 and '\n' not in eq_text: is_bridge = True
+                        if nt != 'equal' or is_bridge:
+                            if nt in ('delete', 'replace'): actual_o = True
+                            if nt in ('insert', 'replace'): actual_n = True
+                            lw_i2, lw_j2 = ni2, nj2
+                            wk += 1
+                        else: break
+                    wt = 'replace' if (actual_o and actual_n) else ('delete' if actual_o else 'insert')
+                    merged_w_ops.append((wt, sw_i1, lw_i2, sw_j1, lw_j2))
+                    wi = wk
+
+            # Inline rendering...
+            for wt, wi1, wi2, wj1, wj2 in merged_w_ops:
+                txt = "".join(w_old[wi1:wi2])
+                if wt == 'equal': para.add_run(txt)
+                elif wt == 'delete': apply_shading(para.add_run(txt), "F8D7DA")
+                elif wt == 'replace': apply_shading(para.add_run(txt), "FFF3CD")
+            
+            para.add_run(" \u2192 ")
+            
+            for wt, wi1, wi2, wj1, wj2 in merged_w_ops:
+                txt = "".join(w_new[wj1:wj2])
+                if wt == 'equal': para.add_run(txt)
+                elif wt == 'insert': apply_shading(para.add_run(txt), "D4EDDA")
+                elif wt == 'replace': apply_shading(para.add_run(txt), "FFF3CD")
+
+        # Process in sequence
+        for tag, i1, i2, j1, j2 in refined_opcodes:
+            txt_o = "".join(lines_old[i1:i2])
+            txt_n = "".join(lines_new[j1:j2])
+            if tag == 'equal':
+                p.add_run(txt_o)
+            elif tag == 'delete':
+                apply_shading(p.add_run(txt_o), "F8D7DA")
+            elif tag == 'replace':
+                render_word_diff_inline(p, txt_o, txt_n)
+
+        # Pure additions (not part of a replace)
+        for tag, i1, i2, j1, j2 in refined_opcodes:
+            if tag == 'insert':
+                p.add_run(" [+] ")
+                apply_shading(p.add_run("".join(lines_new[j1:j2])), "D4EDDA")

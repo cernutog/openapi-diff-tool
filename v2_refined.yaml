@@ -1,0 +1,22 @@
+openapi: 3.0.0
+info:
+  title: Test API
+  description: This is a completely new description that replaces the old one entirely.
+  version: 1.0.0
+paths:
+  /test:
+    get:
+      summary: New Summary
+      description: A completely new description for this operation.
+      responses:
+        '200':
+          description: A completely new response description.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: A completely new schema description.
+                properties:
+                  prop1:
+                    type: string
+                    description: A completely new property description.

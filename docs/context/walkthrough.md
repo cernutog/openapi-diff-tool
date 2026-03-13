@@ -322,6 +322,19 @@ Command: `python main.py data/complex_31_v1.yaml data/complex_31_v2.yaml --forma
 - **Verification**:
     - **Visual**: Confirmed that complex endpoint changes are now fully self-contained and descriptive.
 
+### Scenario 43: Impact Report Logic Refinement
+- **Problem**: `examples` changes were marked as `CRITICAL`, component-level insights leaked into the endpoint matrix, and removed schemas were not traced back to endpoints.
+- **Solution**: Corrected severity to `LOW`, implemented strict insight routing, and added a dual-tracer strategy in `impact_generator.py`.
+- **Result**: Accurate impact analysis with explicit detail on breaking changes (removed properties/parameters) and a clean matrix focusing solely on actual endpoint effects.
+
+### Scenario 46: Extensions, Examples, and Visual Refinement
+- **Problem**: Custom extensions (`x-`) and media type `examples`/`encoding` were ignored by the diff engine. Tables often overflowed the right margin, and the Request Body header had an unnecessary "DETAILS" badge.
+- **Solution**:
+    - **Comparator**: Implemented generic `_compare_extensions` for all components and updated `_compare_media_type` for full detail tracking.
+    - **Labeling**: Refined `analytic_generator.py` to use categorical badges (`NEW`, `REMOVED`, `MODIFIED`). Removed the redundant "DETAILS" badge from Request Body.
+    - **Layout**: Implemented dynamic width calibration for all tables (Total Width = 6.4" - Indent) and reduced the "Field" column width to minimize empty space.
+- **Result**: Complete coverage of all OpenAPI fields and a perfectly aligned, margin-safe report layout.
+
 ### Scenario 28: Impact Report (DOCX) - Intelligent Analysis
 Command: `python main.py data/complex_31_v1.yaml data/complex_31_v2.yaml --format docx --style impact --output report_impact_v2.docx`
 

@@ -55,8 +55,8 @@ def compare_specs(old_spec: Dict[str, Any], new_spec: Dict[str, Any], debug_mode
     # Compare Components
     _compare_components(old_spec.get('components', {}), new_spec.get('components', {}), result)
 
-    # Detect Renamed Schemas (Iterative Propagation)
-    _detect_renamed_schemas(result, old_spec, new_spec)
+    # Detect Renamed Components (Iterative Propagation for schemas, Content-based for others)
+    _detect_renamed_components(result, old_spec, new_spec)
 
     # Dump Debug Trees for User Analysis
     if debug_mode:
@@ -182,11 +182,40 @@ def _compare_servers(old_servers: List, new_servers: List, result: DiffResult):
     if diff:
         result.servers_changes = diff # Need to add this field to DiffResult
 
+def _is_effectively_equal(v1: Any, v2: Any) -> bool:
+    if v1 == v2:
+        return True
+    if isinstance(v1, str) and isinstance(v2, str):
+        # Aggressive normalization:
+        # 1. Normalize line endings to \n
+        # 2. Strip trailing whitespace from EACH line
+        # 3. Strip leading/trailing newlines/whitespace from the whole block
+        def normalize(s):
+            lines = s.replace('\r\n', '\n').split('\n')
+            return "\n".join([line.rstrip() for line in lines]).strip()
+            
+        return normalize(v1) == normalize(v2)
+    return False
+
+def _compare_extensions(old_data: Dict, new_data: Dict) -> Dict:
+    """Finds changes in keys starting with x-"""
+    diff = {}
+    old_ext = {k: v for k, v in old_data.items() if k.startswith('x-')}
+    new_ext = {k: v for k, v in new_data.items() if k.startswith('x-')}
+    
+    all_keys = set(old_ext.keys()) | set(new_ext.keys())
+    for k in all_keys:
+        v1 = old_ext.get(k)
+        v2 = new_ext.get(k)
+        if not _is_effectively_equal(v1, v2):
+            diff[k] = {'old': v1, 'new': v2}
+    return diff
+
 def _compare_info(old_info: Dict, new_info: Dict, result: DiffResult):
     for key in ['title', 'version', 'description', 'termsOfService', 'contact', 'license']:
         old_val = old_info.get(key)
         new_val = new_info.get(key)
-        if old_val != new_val:
+        if not _is_effectively_equal(old_val, new_val):
             result.info_changes[key] = {'old': old_val, 'new': new_val}
 
 def _compare_paths(old_paths: Dict, new_paths: Dict, result: DiffResult):
@@ -223,8 +252,12 @@ def _compare_operation(old_op: Dict, new_op: Dict) -> Dict:
     
     # Compare Metadata (summary, description, deprecated, operationId)
     for key in ['summary', 'description', 'deprecated', 'operationId']:
-        if old_op.get(key) != new_op.get(key):
+        if not _is_effectively_equal(old_op.get(key), new_op.get(key)):
             diff[key] = {'old': old_op.get(key), 'new': new_op.get(key)}
+
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_op, new_op)
+    if ext_diff: diff.update(ext_diff)
 
     # Compare Parameters
     old_params = {p.get('name'): p for p in old_op.get('parameters', [])}
@@ -253,7 +286,7 @@ def _compare_parameter(old_param: Dict, new_param: Dict) -> Dict:
     diff = {}
     # Check basic fields
     for key in ['in', 'required', 'description', 'deprecated']:
-        if old_param.get(key) != new_param.get(key):
+        if not _is_effectively_equal(old_param.get(key), new_param.get(key)):
             diff[key] = {'old': old_param.get(key), 'new': new_param.get(key)}
             
     # Check schema
@@ -262,6 +295,10 @@ def _compare_parameter(old_param: Dict, new_param: Dict) -> Dict:
         if schema_diff:
             diff['schema'] = schema_diff
             
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_param, new_param)
+    if ext_diff: diff.update(ext_diff)
+
     return diff
 
 def _compare_request_body(old_rb: Dict, new_rb: Dict) -> Dict:
@@ -275,12 +312,16 @@ def _compare_request_body(old_rb: Dict, new_rb: Dict) -> Dict:
     content_diff = _compare_dict_items(old_content, new_content, _compare_media_type)
     if content_diff:
         diff['content'] = content_diff
+
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_rb, new_rb)
+    if ext_diff: diff.update(ext_diff)
         
     return diff
 
 def _compare_response(old_resp: Dict, new_resp: Dict) -> Dict:
     diff = {}
-    if old_resp.get('description') != new_resp.get('description'):
+    if not _is_effectively_equal(old_resp.get('description'), new_resp.get('description')):
         diff['description'] = {'old': old_resp.get('description'), 'new': new_resp.get('description')}
         
     # Compare Content
@@ -289,6 +330,10 @@ def _compare_response(old_resp: Dict, new_resp: Dict) -> Dict:
     content_diff = _compare_dict_items(old_content, new_content, _compare_media_type)
     if content_diff:
         diff['content'] = content_diff
+
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_resp, new_resp)
+    if ext_diff: diff.update(ext_diff)
         
     return diff
 
@@ -298,6 +343,25 @@ def _compare_media_type(old_mt: Dict, new_mt: Dict) -> Dict:
         schema_diff = _compare_schema(old_mt.get('schema', {}), new_mt.get('schema', {}))
         if schema_diff:
             diff['schema'] = schema_diff
+            
+    # Compare Examples
+    old_exs = old_mt.get('examples', {})
+    new_exs = new_mt.get('examples', {})
+    exs_diff = _compare_dict_items(old_exs, new_exs, _compare_example)
+    if exs_diff:
+        diff['examples'] = exs_diff
+    elif not _is_effectively_equal(old_mt.get('example'), new_mt.get('example')):
+        # Fallback to single 'example' field
+        diff['example'] = {'old': old_mt.get('example'), 'new': new_mt.get('example')}
+        
+    # Compare Encoding
+    if not _is_effectively_equal(old_mt.get('encoding'), new_mt.get('encoding')):
+        diff['encoding'] = {'old': old_mt.get('encoding'), 'new': new_mt.get('encoding')}
+
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_mt, new_mt)
+    if ext_diff: diff.update(ext_diff)
+    
     return diff
 
 def _compare_dict_items(old_dict: Dict, new_dict: Dict, item_comparator) -> Dict:
@@ -305,16 +369,17 @@ def _compare_dict_items(old_dict: Dict, new_dict: Dict, item_comparator) -> Dict
     old_keys = set(old_dict.keys())
     new_keys = set(new_dict.keys())
     
-    diff['new'] = list(new_keys - old_keys)
-    diff['removed'] = list(old_keys - new_keys)
+    new_items = list(new_keys - old_keys)
+    removed_items = list(old_keys - new_keys)
+    
+    if new_items: diff['new'] = new_items
+    if removed_items: diff['removed'] = removed_items
     
     for key in old_keys & new_keys:
         item_diff = item_comparator(old_dict[key], new_dict[key])
         if item_diff:
             diff.setdefault('modified', {})[key] = item_diff
             
-    if not diff['new'] and not diff['removed'] and 'modified' not in diff:
-        return {}
     return diff
 
 def _compare_components(old_comps: Dict, new_comps: Dict, result: DiffResult):
@@ -341,369 +406,262 @@ def _compare_components(old_comps: Dict, new_comps: Dict, result: DiffResult):
             result.removed_components[comp_type] = diff.get('removed', [])
             result.modified_components[comp_type] = diff.get('modified', {})
 
-def _detect_renamed_schemas(result: DiffResult, old_spec: Dict, new_spec: Dict):
+def _detect_renamed_components(result: DiffResult, old_spec: Dict, new_spec: Dict):
     """
-    Iterative Rename Propagation with Deterministic Resolution.
-    1. Find 'Seed' renames from Endpoints (Roots).
-    2. Propagate renames based on structure.
-    3. Resolve candidates:
-       - Exact Content Match -> Rename (Priority)
-       - Single Candidate (Different Content) -> Modification
-       - Multiple Candidates (Different Content) -> Ambiguous (Unmatched)
-    4. Compute and store diffs for all resolved pairs.
+    Generalized Rename Detection for all component types.
     """
-    removed_schemas = set(result.removed_components.get('schemas', []))
-    new_schemas = set(result.new_components.get('schemas', []))
+    comp_types = ['schemas', 'parameters', 'responses', 'headers', 'securitySchemes', 'examples', 'links', 'callbacks']
     
-    if not removed_schemas or not new_schemas:
+    for c_type in comp_types:
+        if c_type == 'schemas':
+            # Schemas use the complex iterative propagation logic
+            _detect_renamed_type_logic(result, old_spec, new_spec, c_type, _compare_schema, _is_deeply_identical, use_propagation=True)
+        elif c_type == 'examples':
+            # Examples use content-based matching (ignoring summary if it matches key)
+            def is_ex_identical(o, n):
+                # Ignore summary for "Rename" identification if everything else matches
+                for k in ['description', 'value', 'externalValue']:
+                    if not _is_effectively_equal(o.get(k), n.get(k)): return False
+                return True
+            _detect_renamed_type_logic(result, old_spec, new_spec, c_type, _compare_example, is_ex_identical, use_propagation=False)
+        else:
+            # Generic matching for others
+            # The comparator function for a type 'X' is typically '_compare_X'.
+            # For 'parameters', it's '_compare_parameter'. For 'responses', '_compare_response', etc.
+            # The component type names are plural, so we need to remove the 's' for the function name.
+            # Special case for 'requestBodies' -> '_compare_request_body'
+            comparator_name = f'_compare_{c_type[:-1]}' if c_type != 'requestBodies' else '_compare_request_body'
+            comparator = globals().get(comparator_name, lambda o,n: {})
+            _detect_renamed_type_logic(result, old_spec, new_spec, c_type, comparator, lambda o,n: o == n, use_propagation=False)
+
+def _detect_renamed_type_logic(result: DiffResult, old_spec: Dict, new_spec: Dict, comp_type: str, item_comparator, content_matcher, use_propagation=False):
+    removed = set(result.removed_components.get(comp_type, []))
+    new = set(result.new_components.get(comp_type, []))
+    
+    if not removed or not new:
         return
 
-    # Map old_name -> dict of {new_name: count}
-    candidates = {} 
+    def _get_comp(spec, name):
+        return spec.get('components', {}).get(comp_type, {}).get(name)
 
-    def _register_candidate(old_ref, new_ref):
-        if old_ref and new_ref and isinstance(old_ref, str) and isinstance(new_ref, str):
-            if old_ref.startswith('#/components/schemas/') and new_ref.startswith('#/components/schemas/'):
-                old_name = old_ref.split('/')[-1]
-                new_name = new_ref.split('/')[-1]
+    candidates = {} # old_name -> {new_name: count/score}
+
+    if use_propagation:
+        # Propagation Phase (Schemas specific)
+        def _register_candidate(old_ref, new_ref):
+            if old_ref and new_ref and isinstance(old_ref, str) and isinstance(new_ref, str):
+                prefix = f'#/components/{comp_type}/'
+                if old_ref.startswith(prefix) and new_ref.startswith(prefix):
+                    old_name = old_ref.split('/')[-1]
+                    new_name = new_ref.split('/')[-1]
+                    if old_name in removed and new_name in new:
+                        candidates.setdefault(old_name, {})[new_name] = candidates[old_name].get(new_name, 0) + 1
+
+        # Seed from endpoints/other modified components
+        def _scan_refs(data, visited=None):
+            if visited is None: visited = set()
+            if id(data) in visited: return
+            visited.add(id(data))
+            if isinstance(data, dict):
+                if '$ref' in data and isinstance(data['$ref'], dict) and 'old' in data['$ref'] and 'new' in data['$ref']:
+                    _register_candidate(data['$ref']['old'], data['$ref']['new'])
                 
-                if old_name in removed_schemas and new_name in new_schemas:
-                    if old_name not in candidates:
-                        candidates[old_name] = {}
-                    candidates[old_name][new_name] = candidates[old_name].get(new_name, 0) + 1
+                # Check for 1-to-1 replacement in added/removed lists (e.g. allOf/oneOf changes)
+                if 'added' in data and 'removed' in data:
+                    added = data['added']
+                    removed_items = data['removed']
+                    if isinstance(added, list) and isinstance(removed_items, list):
+                        if len(added) == 1 and len(removed_items) == 1:
+                            old_item = removed_items[0]
+                            new_item = added[0]
+                            
+                            if isinstance(old_item, dict) and '$ref' in old_item and \
+                               isinstance(new_item, dict) and '$ref' in new_item:
+                                _register_candidate(old_item['$ref'], new_item['$ref'])
 
-    def _check_ref_change(change_val):
-        if isinstance(change_val, dict) and '$ref' in change_val:
-            ref_change = change_val['$ref']
-            if isinstance(ref_change, dict) and 'old' in ref_change and 'new' in ref_change:
-                _register_candidate(ref_change['old'], ref_change['new'])
-
-    # 1. Seed Phase: Scan Endpoints (Paths) for initial renames
-    def _scan_paths(data, visited=None):
-        if visited is None: visited = set()
-        if id(data) in visited: return
-        visited.add(id(data))
-
-        if isinstance(data, dict):
-            if '$ref' in data and 'old' in data['$ref'] and 'new' in data['$ref']:
-                 _check_ref_change(data)
-            
-            # Check for 1-to-1 replacement in added/removed lists (e.g. allOf/oneOf changes)
-            if 'added' in data and 'removed' in data:
-                added = data['added']
-                removed = data['removed']
-                if isinstance(added, list) and isinstance(removed, list):
-                    if len(added) == 1 and len(removed) == 1:
-                        old_item = removed[0]
-                        new_item = added[0]
-                        
-                        if isinstance(old_item, dict) and '$ref' in old_item and \
-                           isinstance(new_item, dict) and '$ref' in new_item:
-                            _register_candidate(old_item['$ref'], new_item['$ref'])
-
-            for key, value in data.items():
-                _scan_paths(value, visited)
-        elif isinstance(data, list):
-            for item in data:
-                _scan_paths(item, visited)
-    
-    _scan_paths(result.modified_paths)
-    _scan_paths(result.modified_components) 
-
-    # 2. Propagation Phase
-    def _get_schema(spec, name):
-        return spec.get('components', {}).get('schemas', {}).get(name)
-
-    def _compare_and_propagate(old_s, new_s):
-        # Compare properties
-        old_props = old_s.get('properties', {})
-        new_props = new_s.get('properties', {})
+                for v in data.values(): _scan_refs(v, visited)
+            elif isinstance(data, list):
+                for i in data: _scan_refs(i, visited)
         
-        for prop in old_props:
-            if prop in new_props:
-                op = old_props[prop]
-                np = new_props[prop]
-                
-                # Direct Ref
-                if '$ref' in op and '$ref' in np:
-                    _register_candidate(op['$ref'], np['$ref'])
-                
-                # Array Items Ref
-                if 'items' in op and 'items' in np:
-                    if '$ref' in op['items'] and '$ref' in np['items']:
-                        _register_candidate(op['items']['$ref'], np['items']['$ref'])
+        _scan_refs(result.modified_paths)
+        _scan_refs(result.modified_components)
+    else:
+        # Content-Based Candidate Generation (Greedy matching for non-propagating types)
+        for o_name in removed:
+            old_def = _get_comp(old_spec, o_name)
+            for n_name in new:
+                new_def = _get_comp(new_spec, n_name)
+                if old_def and new_def and content_matcher(old_def, new_def):
+                    candidates.setdefault(o_name, {})[n_name] = 100 # High score for identical
 
-        # allOf/anyOf/oneOf
-        for k in ['allOf', 'anyOf', 'oneOf']:
-            if k in old_s and k in new_s:
-                ol = old_s[k]
-                nl = new_s[k]
-                
-                if len(ol) == len(nl):
-                    for i in range(len(ol)):
-                        if '$ref' in ol[i] and '$ref' in nl[i]:
-                            _register_candidate(ol[i]['$ref'], nl[i]['$ref'])
-
-    def _is_deeply_identical(old_s, new_s, visited=None, debug=False):
-        if visited is None: visited = set()
-        
-        pair_id = (id(old_s), id(new_s))
-        if pair_id in visited:
-            return True
-        visited.add(pair_id)
-
-        # 1. Compare Constraints
-        constraints = ['type', 'format', 'minLength', 'maxLength', 'pattern', 'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'required', 'nullable', 'readOnly', 'writeOnly', 'deprecated']
-        for c in constraints:
-            if old_s.get(c) != new_s.get(c):
-                if debug: print(f"    Diff in constraint '{c}': {old_s.get(c)} != {new_s.get(c)}")
-                return False
-
-        # 2. Compare Properties
-        old_props = old_s.get('properties', {})
-        new_props = new_s.get('properties', {})
-        if set(old_props.keys()) != set(new_props.keys()):
-            if debug: print(f"    Diff in properties keys: {set(old_props.keys())} != {set(new_props.keys())}")
-            return False
-        for k in old_props:
-            if not _is_deeply_identical(old_props[k], new_props[k], visited, debug):
-                if debug: print(f"    Diff in property '{k}'")
-                return False
-
-        # 3. Compare Items
-        if 'items' in old_s or 'items' in new_s:
-            if 'items' not in old_s or 'items' not in new_s:
-                if debug: print("    Diff in items existence")
-                return False
-            if not _is_deeply_identical(old_s['items'], new_s['items'], visited, debug):
-                if debug: print("    Diff in items content")
-                return False
-
-        # 4. Compare Combinators
-        for k in ['allOf', 'anyOf', 'oneOf']:
-            if k in old_s or k in new_s:
-                if k not in old_s or k not in new_s:
-                    if debug: print(f"    Diff in combinator '{k}' existence")
-                    return False
-                ol = old_s[k]
-                nl = new_s[k]
-                if len(ol) != len(nl):
-                    if debug: print(f"    Diff in combinator '{k}' length")
-                    return False
-                for i in range(len(ol)):
-                    if not _is_deeply_identical(ol[i], nl[i], visited, debug):
-                        if debug: print(f"    Diff in combinator '{k}' item {i}")
-                        return False
-
-        # 5. Compare $ref
-        old_ref = old_s.get('$ref')
-        new_ref = new_s.get('$ref')
-        
-        if old_ref and new_ref:
-            if old_ref == new_ref:
-                return True
-            
-            if old_ref.startswith('#/components/schemas/'):
-                old_target_name = old_ref.split('/')[-1]
-                old_target = _get_schema(old_spec, old_target_name)
-            else:
-                old_target = None
-                
-            if new_ref.startswith('#/components/schemas/'):
-                new_target_name = new_ref.split('/')[-1]
-                new_target = _get_schema(new_spec, new_target_name)
-            else:
-                new_target = None
-
-            if old_target and new_target:
-                if debug: print(f"    Recursing into ref: {old_ref} -> {new_ref}")
-                return _is_deeply_identical(old_target, new_target, visited, debug)
-            else:
-                if debug: print(f"    Ref resolution failed: {old_ref} vs {new_ref}")
-                return old_ref == new_ref
-        elif old_ref or new_ref:
-            if debug: print(f"    Diff in ref existence: {old_ref} vs {new_ref}")
-            return False
-
-        return True
-
-    def _is_content_identical(old_s, new_s, debug=False):
-        return _is_deeply_identical(old_s, new_s, debug=debug)
-
-    def _count_diff_size(diff):
-        """Recursively count the number of leaf changes in a diff dict."""
-        if not isinstance(diff, dict): return 1
-        count = 0
-        for k, v in diff.items():
-            if k in ['old', 'new'] and not isinstance(v, dict): # Leaf change
-                count += 1
-            elif isinstance(v, dict):
-                count += _count_diff_size(v)
-            elif isinstance(v, list): # Added/Removed lists
-                count += len(v)
-        return count
-
-    # Iteration Loop
-    processed_pairs = set()
-    
-    while True:
-        # Determine current valid renames (Resolution Logic)
-        current_renames = {} # old_name -> (new_name, status)
-        
-        for old_name, targets_dict in candidates.items():
-            old_def = _get_schema(old_spec, old_name)
-            if not old_def: continue
-
-            # 1. Filter for identical content
-            identical_targets = []
-            for t in targets_dict.keys():
-                new_def = _get_schema(new_spec, t)
-                is_id = new_def and _is_content_identical(old_def, new_def)
-                if is_id:
-                    identical_targets.append(t)
-            
-            if len(identical_targets) == 1:
-                # Case A: Exactly One Identical Candidate -> RENAME (Priority)
-                winner = identical_targets[0]
-                current_renames[old_name] = (winner, "Rename")
-            elif len(identical_targets) > 1:
-                # Case C: Multiple Identical Candidates -> Ambiguous
-                # Resolve by Voting (Usage Count)
-                best_match = None
-                max_votes = -1
-                
-                for t in identical_targets:
-                    votes = targets_dict.get(t, 0)
-                    if votes > max_votes:
-                        max_votes = votes
-                        best_match = t
-                    elif votes == max_votes:
-                        # Tie-breaker: Lexicographical for determinism (no name similarity logic)
-                        if best_match is None or t < best_match:
-                            best_match = t
-                
-                if best_match:
-                    current_renames[old_name] = (best_match, "Rename")
-            else:
-                # Case B: No Identical Candidates -> Try Least Differences
-                best_target = None
-                min_score = float('inf')
-                
-                # Sort targets for deterministic tie-breaking (lexicographical)
-                sorted_targets = sorted(list(targets_dict.keys()))
-                
-                for t in sorted_targets:
-                    new_def = _get_schema(new_spec, t)
-                    if not new_def: continue
-                    
-                    diff = _compare_schema(old_def, new_def)
-                    score = _count_diff_size(diff)
-                    
-                    if score < min_score:
-                        min_score = score
-                        best_target = t
-                
-                if best_target:
-                    current_renames[old_name] = (best_target, "Modification")
-        
-        # Check if we found anything new to process
-        new_work = False
-        for old_name, (new_name, status) in current_renames.items():
-            pair = (old_name, new_name)
-            if pair not in processed_pairs:
-                processed_pairs.add(pair)
-                
-                # Look up definitions
-                old_def = _get_schema(old_spec, old_name)
-                new_def = _get_schema(new_spec, new_name)
-                
-                if old_def and new_def:
-                    _compare_and_propagate(old_def, new_def)
-                    new_work = True
-        
-        if not new_work:
-            break
-
-    # Finalize Renames and Compute Diffs
+    # Resolution Logic (Shared)
     final_renames = {}
-    for old_name, targets_dict in candidates.items():
-        # Re-apply resolution logic one last time to get final set
-        old_def = _get_schema(old_spec, old_name)
-        if not old_def: continue
-
+    
+    # 1. Identical Content Priority
+    # Iterate over a sorted list to ensure deterministic behavior
+    for o_name in sorted(list(removed)):
+        old_def = _get_comp(old_spec, o_name)
+        if not old_def: continue # Should not happen if it was in removed_components
+        
         identical_targets = []
-        for t in targets_dict.keys():
-            new_def = _get_schema(new_spec, t)
-            if new_def and _is_content_identical(old_def, new_def):
-                identical_targets.append(t)
+        for n_name in sorted(list(new)):
+            new_def = _get_comp(new_spec, n_name)
+            if new_def and content_matcher(old_def, new_def):
+                identical_targets.append(n_name)
         
         if len(identical_targets) == 1:
-            final_renames[old_name] = (identical_targets[0], "Rename")
+            final_renames[o_name] = (identical_targets[0], "Rename")
         elif len(identical_targets) > 1:
-            # Ambiguous identicals - try voting
+            # Ambiguous - use candidates (votes) or lexicographical
             best_match = None
             max_votes = -1
-            
             for t in identical_targets:
-                votes = targets_dict.get(t, 0)
-                if votes > max_votes:
-                    max_votes = votes
-                    best_match = t
+                votes = candidates.get(o_name, {}).get(t, 0)
+                if votes > max_votes: max_votes, best_match = votes, t
                 elif votes == max_votes:
-                    # Tie-breaker: Lexicographical
-                    if best_match is None or t < best_match:
-                        best_match = t
-            
-            if best_match:
-                final_renames[old_name] = (best_match, "Rename")
-        else:
-            # No identicals
-            if len(targets_dict) == 1:
-                final_renames[old_name] = (list(targets_dict.keys())[0], "Modification")
-            else:
-                # Multiple different candidates -> Try Least Differences
-                best_target = None
-                min_score = float('inf')
-                sorted_targets = sorted(list(targets_dict.keys()))
-                
-                for t in sorted_targets:
-                    new_def = _get_schema(new_spec, t)
-                    if not new_def: continue
-                    diff = _compare_schema(old_def, new_def)
-                    score = _count_diff_size(diff)
-                    if score < min_score:
-                        min_score = score
-                        best_target = t
-                
-                if best_target:
-                    final_renames[old_name] = (best_target, "Modification")
+                    if best_match is None or t < best_match: best_match = t
+            if best_match: final_renames[o_name] = (best_match, "Rename")
 
+    # Update processed sets for the next step
+    # Create copies to modify
+    current_removed = list(removed)
+    current_new = list(new)
+
+    for o, (n, s) in final_renames.items():
+        if o in current_removed: current_removed.remove(o)
+        if n in current_new: current_new.remove(n)
+
+    # 2. Similarity Match (Remaining unmatched items)
+    # For non-propagating types, if there's a 1-to-1 match left, assume it's a modification
+    if not use_propagation:
+        if len(current_removed) == 1 and len(current_new) == 1:
+            o_name = current_removed[0]
+            n_name = current_new[0]
+            final_renames[o_name] = (n_name, "Modification")
+            current_removed.clear()
+            current_new.clear()
+    else: # For schemas, use the iterative propagation logic to find more candidates
+        # This part of the logic was in the original _detect_renamed_schemas
+        # It's about finding more candidates through structural comparison, not resolving.
+        # The current structure resolves candidates based on content_matcher and votes.
+        # If we want to re-introduce structural propagation for schemas, it needs to be
+        # integrated into the candidate generation phase or as a separate pass.
+        # For now, the _scan_refs seeds initial candidates, and the resolution logic handles them.
+        pass
+
+    # Finalize Renames and Compute Diffs
     if final_renames:
-        # Store simple mapping for backward compatibility if needed, 
-        # but primarily we want to store the diffs.
-        result.renamed_components['schemas'] = {k: v[0] for k, v in final_renames.items()}
+        result.renamed_components.setdefault(comp_type, {}).update({k: v[0] for k, v in final_renames.items()})
         
-        # Remove from New/Removed lists
-        current_new = result.new_components.get('schemas', [])
-        current_removed = result.removed_components.get('schemas', [])
+        # Update the result's new/removed lists based on what was renamed
+        # Make sure to operate on the actual lists in result, not copies
+        result_new_list = result.new_components.get(comp_type, [])
+        result_removed_list = result.removed_components.get(comp_type, [])
         
-        for old, (new, status) in final_renames.items():
-            if old in current_removed:
-                current_removed.remove(old)
-            if new in current_new:
-                current_new.remove(new)
+        for old, (new_name, status) in final_renames.items():
+            if old in result_removed_list:
+                result_removed_list.remove(old)
+            if new_name in result_new_list:
+                result_new_list.remove(new_name)
             
-            # COMPUTE AND STORE DIFF
-            old_def = _get_schema(old_spec, old)
-            new_def = _get_schema(new_spec, new)
-            diff = _compare_schema(old_def, new_def)
+            old_def = _get_comp(old_spec, old)
+            new_def = _get_comp(new_spec, new_name)
+            diff = item_comparator(old_def, new_def)
             
             # Annotate diff with rename info
-            diff['__rename_info__'] = {'new_name': new, 'status': status}
-            result.modified_components.setdefault('schemas', {})[old] = diff
+            diff['__rename_info__'] = {'new_name': new_name, 'status': status}
+            result.modified_components.setdefault(comp_type, {})[old] = diff
         
-        result.new_components['schemas'] = current_new
-        result.removed_components['schemas'] = current_removed
+        result.new_components[comp_type] = result_new_list
+        result.removed_components[comp_type] = result_removed_list
+
+def _is_deeply_identical(old_s, new_s, visited=None, debug=False):
+    old_s = _unwrap_schema(old_s)
+    new_s = _unwrap_schema(new_s)
+    
+    if visited is None: visited = set()
+    
+    pair_id = (id(old_s), id(new_s))
+    if pair_id in visited:
+        return True
+    visited.add(pair_id)
+
+    # 1. Compare Constraints
+    constraints = ['type', 'format', 'minLength', 'maxLength', 'pattern', 'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'required', 'nullable', 'readOnly', 'writeOnly', 'deprecated']
+    for c in constraints:
+        if not _is_effectively_equal(old_s.get(c), new_s.get(c)):
+            if debug: print(f"    Diff in constraint '{c}': {old_s.get(c)} != {new_s.get(c)}")
+            return False
+
+    # 2. Compare Properties
+    old_props = old_s.get('properties', {})
+    new_props = new_s.get('properties', {})
+    if set(old_props.keys()) != set(new_props.keys()):
+        if debug: print(f"    Diff in properties keys: {set(old_props.keys())} != {set(new_props.keys())}")
+        return False
+    for k in old_props:
+        if not _is_deeply_identical(old_props[k], new_props[k], visited, debug):
+            if debug: print(f"    Diff in property '{k}'")
+            return False
+
+    # 3. Compare Items
+    if 'items' in old_s or 'items' in new_s:
+        if 'items' not in old_s or 'items' not in new_s:
+            if debug: print("    Diff in items existence")
+            return False
+        if not _is_deeply_identical(old_s['items'], new_s['items'], visited, debug):
+            if debug: print("    Diff in items content")
+            return False
+
+    # 4. Compare Combinators
+    for k in ['allOf', 'anyOf', 'oneOf']:
+        if k in old_s or k in new_s:
+            if k not in old_s or k not in new_s:
+                if debug: print(f"    Diff in combinator '{k}' existence")
+                return False
+            ol = old_s[k]
+            nl = new_s[k]
+            if len(ol) != len(nl):
+                if debug: print(f"    Diff in combinator '{k}' length")
+                return False
+            for i in range(len(ol)):
+                if not _is_deeply_identical(ol[i], nl[i], visited, debug):
+                    if debug: print(f"    Diff in combinator '{k}' item {i}")
+                    return False
+
+    # 5. Compare $ref
+    old_ref = old_s.get('$ref')
+    new_ref = new_s.get('$ref')
+    
+    if old_ref and new_ref:
+        if old_ref == new_ref:
+            return True
+        
+        # This part needs to be generalized to _get_comp for the specific comp_type
+        # For schemas, it would be:
+        if old_ref.startswith('#/components/schemas/'):
+            old_target_name = old_ref.split('/')[-1]
+            old_target = old_spec.get('components', {}).get('schemas', {}).get(old_target_name)
+        else:
+            old_target = None
+            
+        if new_ref.startswith('#/components/schemas/'):
+            new_target_name = new_ref.split('/')[-1]
+            new_target = new_spec.get('components', {}).get('schemas', {}).get(new_target_name)
+        else:
+            new_target = None
+
+        if old_target and new_target:
+            if debug: print(f"    Recursing into ref: {old_ref} -> {new_ref}")
+            return _is_deeply_identical(old_target, new_target, visited, debug)
+        else:
+            if debug: print(f"    Ref resolution failed: {old_ref} vs {new_ref}")
+            return old_ref == new_ref
+    elif old_ref or new_ref:
+        if debug: print(f"    Diff in ref existence: {old_ref} vs {new_ref}")
+        return False
+
+    return True
 
 def _compare_header(old_h, new_h):
     # Headers are similar to parameters (minus 'in' and 'name')
@@ -713,14 +671,19 @@ def _compare_header(old_h, new_h):
              if 'schema' in old_h or 'schema' in new_h:
                 s_diff = _compare_schema(old_h.get('schema', {}), new_h.get('schema', {}))
                 if s_diff: diff['schema'] = s_diff
-        elif old_h.get(key) != new_h.get(key):
+        elif not _is_effectively_equal(old_h.get(key), new_h.get(key)):
             diff[key] = {'old': old_h.get(key), 'new': new_h.get(key)}
+
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_h, new_h)
+    if ext_diff: diff.update(ext_diff)
+
     return diff
 
 def _compare_link(old_l, new_l):
     diff = {}
     for key in ['operationRef', 'operationId', 'description', 'server']:
-        if old_l.get(key) != new_l.get(key):
+        if not _is_effectively_equal(old_l.get(key), new_l.get(key)):
             diff[key] = {'old': old_l.get(key), 'new': new_l.get(key)}
     return diff
 
@@ -728,37 +691,65 @@ def _compare_callback(old_c, new_c):
     # Callbacks are maps of Path Items
     # For simplicity, just check equality or basic diff
     # A full recursive path comparison would be needed for deep diff
-    if old_c != new_c:
+    if not _is_effectively_equal(old_c, new_c): # Changed from old_c != new_c
         return {'old': 'modified', 'new': 'modified'} # Placeholder for deep diff
     return {}
 
-def _compare_example(old_e, new_e):
+def _compare_example(old_e: Dict, new_e: Dict) -> Dict:
     diff = {}
     for key in ['summary', 'description', 'value', 'externalValue']:
-        if old_e.get(key) != new_e.get(key):
+        if not _is_effectively_equal(old_e.get(key), new_e.get(key)):
             diff[key] = {'old': old_e.get(key), 'new': new_e.get(key)}
+    
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_e, new_e)
+    if ext_diff: diff.update(ext_diff)
+    
     return diff
 
 def _compare_security_scheme(old_s, new_s):
     diff = {}
     for key in ['type', 'description', 'name', 'in', 'scheme', 'bearerFormat', 'flows', 'openIdConnectUrl']:
-        if old_s.get(key) != new_s.get(key):
+        if not _is_effectively_equal(old_s.get(key), new_s.get(key)):
             diff[key] = {'old': old_s.get(key), 'new': new_s.get(key)}
     return diff
 
+def _unwrap_schema(schema: Any) -> Any:
+    """
+    Normalizes schemas by unwrapping single-item allOf/anyOf/oneOf wrappers.
+    e.g., {"allOf": [{"$ref": "..."}]} -> {"$ref": "..."}
+    """
+    if not isinstance(schema, dict):
+        return schema
+        
+    comb_keys = ['allOf', 'anyOf', 'oneOf']
+    for k in comb_keys:
+        if k in schema and len(schema) == 1:
+            val = schema[k]
+            if isinstance(val, list) and len(val) == 1:
+                return _unwrap_schema(val[0])
+    return schema
+
 def _compare_schema(old_schema: Dict, new_schema: Dict) -> Dict:
+    old_schema = _unwrap_schema(old_schema)
+    new_schema = _unwrap_schema(new_schema)
+    
     diff = {}
     # Check constraints
-    constraints = ['type', 'format', 'minLength', 'maxLength', 'pattern', 'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'required', 'nullable', 'readOnly', 'writeOnly', 'deprecated']
+    constraints = ['type', 'format', 'description', 'minLength', 'maxLength', 'pattern', 'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'required', 'nullable', 'readOnly', 'writeOnly', 'deprecated']
     
     for c in constraints:
         # Handle list comparison for enum and required by converting to set if order doesn't matter? 
         # For now, strict equality
-        if old_schema.get(c) != new_schema.get(c):
+        if not _is_effectively_equal(old_schema.get(c), new_schema.get(c)):
              diff[c] = {'old': old_schema.get(c), 'new': new_schema.get(c)}
+
+    # Custom Extensions
+    ext_diff = _compare_extensions(old_schema, new_schema)
+    if ext_diff: diff.update(ext_diff)
              
     # Check $ref
-    if old_schema.get('$ref') != new_schema.get('$ref'):
+    if not _is_effectively_equal(old_schema.get('$ref'), new_schema.get('$ref')): # Changed from old_schema.get('$ref') != new_schema.get('$ref')
         diff['$ref'] = {'old': old_schema.get('$ref'), 'new': new_schema.get('$ref')}
         
     # Check properties recursively

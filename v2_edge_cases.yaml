@@ -1,0 +1,19 @@
+openapi: 3.0.0
+info:
+  title: Test API
+  description: |
+    Para 1: This is the COMPLETELY NEW paragraph 1.
+paths:
+  /test:
+    get:
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qualifier:
+                    type: string
+                    description: "Qualifier: PVAH, PVHI, PVAG"
