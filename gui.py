@@ -227,7 +227,7 @@ class PreferencesDialog:
             self._load_vars()
 
 
-VERSION = "1.2.0"
+VERSION = "1.2"
 
 class OpenAPIDiffGUI:
     def __init__(self, root):

@@ -16,7 +16,7 @@ A powerful, GUI-based tool for comparing OpenAPI specifications (Swagger) and ge
 *   **User-Friendly GUI**: Native Windows interface with drag-and-drop support (via file browsing).
 *   **Standalone Executable**: No Python installation required for end-users.
 
-## What's New in v1.2.0
+## What's New in v1.2
 *   **Custom Extensions Support**: Full tracking and reporting of vendor-specific extensions (`x-`).
 *   **Enhanced Media Type Comparison**: Now includes `examples` and `encoding` diffing.
 *   **Visual Refinement**: Analytical reports now use dynamic table widths for perfect margin alignment and a cleaner labeling style.
